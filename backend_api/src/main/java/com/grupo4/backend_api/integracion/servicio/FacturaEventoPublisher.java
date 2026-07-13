@@ -2,7 +2,6 @@ package com.grupo4.backend_api.integracion.servicio;
 
 import com.grupo4.backend_api.facturacion.modelo.FacturaCabecera;
 import com.grupo4.backend_api.facturacion.modelo.FacturaDetalle;
-import jakarta.annotation.Resource;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.jms.JMSContext;
@@ -17,10 +16,7 @@ import java.util.Map;
 public class FacturaEventoPublisher {
 
     @Inject
-    private JMSContext jmsContext;
-
-    @Resource(lookup = "java:global/jms/facturaCreadaQueue")
-    private Queue facturaCreadaQueue;
+    private JmsClientFactory jmsClientFactory;
 
     public void publicar(FacturaCabecera factura) {
         Map<String, Object> evento = new LinkedHashMap<>();
@@ -39,13 +35,15 @@ public class FacturaEventoPublisher {
         payload.put("detalles", factura.getDetalles().stream().map(this::detalleComoMapa).toList());
         evento.put("payload", payload);
 
-        try (Jsonb jsonb = JsonbBuilder.create()) {
+        Queue queue = jmsClientFactory.facturaCreadaQueue();
+        try (Jsonb jsonb = JsonbBuilder.create();
+             JMSContext jmsContext = jmsClientFactory.crearContexto(JMSContext.AUTO_ACKNOWLEDGE)) {
             String json = jsonb.toJson(evento);
             jmsContext.createProducer()
                     .setProperty("tipoEvento", "FACTURA_CREADA")
                     .setProperty("origen", "FACTURACION")
                     .setProperty("destino", "INVENTARIO")
-                    .send(facturaCreadaQueue, json);
+                    .send(queue, json);
         } catch (Exception e) {
             throw new IllegalStateException("No fue posible publicar la factura en la cola JMS.", e);
         }
