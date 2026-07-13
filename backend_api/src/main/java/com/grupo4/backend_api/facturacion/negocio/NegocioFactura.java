@@ -4,7 +4,9 @@ import com.grupo4.backend_api.facturacion.modelo.CiudadEntrega;
 import com.grupo4.backend_api.facturacion.modelo.Cliente;
 import com.grupo4.backend_api.facturacion.modelo.FacturaCabecera;
 import com.grupo4.backend_api.facturacion.modelo.FacturaDetalle;
+import com.grupo4.backend_api.integracion.servicio.FacturaEventoPublisher;
 import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.inject.Inject;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.NoResultException;
 import jakarta.persistence.PersistenceContext;
@@ -21,6 +23,9 @@ public class NegocioFactura {
 
     @PersistenceContext(unitName = "SistemaContablePU")
     private EntityManager em;
+
+    @Inject
+    private FacturaEventoPublisher facturaEventoPublisher;
 
     @Transactional
     public int insertar(FacturaCabecera factura) {
@@ -60,6 +65,7 @@ public class NegocioFactura {
         factura.setValorTotal(total);
         em.persist(factura);
         em.flush();
+        facturaEventoPublisher.publicar(factura);
         return 1;
     }
 
