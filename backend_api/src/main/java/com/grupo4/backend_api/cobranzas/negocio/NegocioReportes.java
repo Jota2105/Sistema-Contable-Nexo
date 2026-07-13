@@ -1,101 +1,86 @@
 package com.grupo4.backend_api.cobranzas.negocio;
 
-
 import com.grupo4.backend_api.cobranzas.dto.ReporteEstadoCuentaDTO;
 import com.grupo4.backend_api.cobranzas.dto.ReporteMatrizDTO;
 import com.grupo4.backend_api.facturacion.modelo.FacturaCabecera;
-import jakarta.persistence.*;
+import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
 import java.util.ArrayList;
 import java.util.Date;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
+@ApplicationScoped
 public class NegocioReportes {
 
-    private static final String PU = "SistemaContablePU";
+    @PersistenceContext(unitName = "SistemaContablePU")
+    private EntityManager em;
 
     public List<ReporteEstadoCuentaDTO> generarEstadoCuentaPorFechas(Date inicio, Date fin) {
-        EntityManagerFactory emf = null;
-        EntityManager em = null;
-        List<ReporteEstadoCuentaDTO> listaReporte = new ArrayList<>();
+        validarFechas(inicio, fin);
 
-        try {
-            emf = Persistence.createEntityManagerFactory(PU);
-            em = emf.createEntityManager();
+        List<FacturaCabecera> facturas = em.createQuery(
+                "SELECT f FROM FacturaCabecera f JOIN FETCH f.cliente " +
+                "WHERE f.fecha BETWEEN :inicio AND :fin " +
+                "ORDER BY f.numeroFactura",
+                FacturaCabecera.class)
+                .setParameter("inicio", inicio)
+                .setParameter("fin", fin)
+                .getResultList();
 
+        List<ReporteEstadoCuentaDTO> resultado = new ArrayList<>();
+        for (FacturaCabecera factura : facturas) {
+            Double pagado = em.createQuery(
+                    "SELECT COALESCE(SUM(p.valor), 0.0) FROM PagoDetalle p " +
+                    "WHERE p.factura.idFactura = :idFactura",
+                    Double.class)
+                    .setParameter("idFactura", factura.getIdFactura())
+                    .getSingleResult();
 
-            TypedQuery<FacturaCabecera> queryFacturas = em.createQuery(
-                    "SELECT f FROM FacturaCabecera f WHERE f.fecha BETWEEN :inicio AND :fin ORDER BY f.numeroFactura ASC",
-                    FacturaCabecera.class);
-            queryFacturas.setParameter("inicio", inicio);
-            queryFacturas.setParameter("fin", fin);
-            List<FacturaCabecera> facturas = queryFacturas.getResultList();
-
-
-            for (FacturaCabecera f : facturas) {
-                TypedQuery<Double> queryPagos = em.createQuery(
-                        "SELECT COALESCE(SUM(p.valor), 0.0) FROM PagoDetalle p WHERE p.factura.idFactura = :idFactura",
-                        Double.class);
-                queryPagos.setParameter("idFactura", f.getIdFactura());
-                Double totalPagado = queryPagos.getSingleResult();
-
-
-                listaReporte.add(new ReporteEstadoCuentaDTO(
-                        f.getNumeroFactura(),
-                        f.getValorTotal(),
-                        totalPagado
-                ));
-            }
-
-            return listaReporte;
-        } catch (Exception e) {
-            e.printStackTrace();
-            return null;
-        } finally {
-            if (em != null) em.close();
-            if (emf != null) emf.close();
+            resultado.add(new ReporteEstadoCuentaDTO(
+                    factura.getIdFactura(),
+                    factura.getNumeroFactura(),
+                    factura.getFecha(),
+                    factura.getCliente(),
+                    factura.getValorTotal(),
+                    pagado));
         }
+        return resultado;
     }
+
     public List<ReporteMatrizDTO> generarMatrizCruzada(Date inicio, Date fin) {
-        EntityManagerFactory emf = null;
-        EntityManager em = null;
+        validarFechas(inicio, fin);
 
-        java.util.Map<String, ReporteMatrizDTO> mapaMatriz = new java.util.HashMap<>();
+        List<Object[]> filas = em.createQuery(
+                "SELECT p.cobrador.nombre, p.formaPago.nombre, SUM(p.valor) " +
+                "FROM PagoDetalle p " +
+                "WHERE p.fechaPago BETWEEN :inicio AND :fin " +
+                "GROUP BY p.cobrador.nombre, p.formaPago.nombre " +
+                "ORDER BY p.cobrador.nombre, p.formaPago.nombre",
+                Object[].class)
+                .setParameter("inicio", inicio)
+                .setParameter("fin", fin)
+                .getResultList();
 
-        try {
-            emf = Persistence.createEntityManagerFactory(PU);
-            em = emf.createEntityManager();
+        Map<String, ReporteMatrizDTO> matriz = new LinkedHashMap<>();
+        for (Object[] fila : filas) {
+            String cobrador = String.valueOf(fila[0]);
+            String formaPago = String.valueOf(fila[1]);
+            Number total = (Number) fila[2];
+            matriz.computeIfAbsent(cobrador, ReporteMatrizDTO::new)
+                    .agregarValor(formaPago, total == null ? 0.0 : total.doubleValue());
+        }
+        return new ArrayList<>(matriz.values());
+    }
 
-
-            String jpql = "SELECT p.cobrador.nombre, p.formaPago.nombre, SUM(p.valor) " +
-                    "FROM PagoDetalle p " +
-                    "WHERE p.fechaPago BETWEEN :inicio AND :fin " +
-                    "GROUP BY p.cobrador.nombre, p.formaPago.nombre";
-
-            List<Object[]> resultados = em.createQuery(jpql, Object[].class)
-                    .setParameter("inicio", inicio)
-                    .setParameter("fin", fin)
-                    .getResultList();
-
-
-            for (Object[] fila : resultados) {
-                String cobrador = (String) fila[0];
-                String formaPago = (String) fila[1];
-                Double sumaValor = (Double) fila[2];
-
-
-                mapaMatriz.putIfAbsent(cobrador, new ReporteMatrizDTO(cobrador));
-
-
-                mapaMatriz.get(cobrador).agregarValor(formaPago, sumaValor);
-            }
-
-            return new java.util.ArrayList<>(mapaMatriz.values());
-        } catch (Exception e) {
-            e.printStackTrace();
-            return null;
-        } finally {
-            if (em != null) em.close();
-            if (emf != null) emf.close();
+    private void validarFechas(Date inicio, Date fin) {
+        if (inicio == null || fin == null) {
+            throw new IllegalArgumentException("Las fechas de inicio y fin son obligatorias.");
+        }
+        if (inicio.after(fin)) {
+            throw new IllegalArgumentException("La fecha de inicio no puede ser posterior a la fecha final.");
         }
     }
 }
