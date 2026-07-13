@@ -1,0 +1,179 @@
+services:
+  postgresql-0:
+    image: bitnami/postgresql-repmgr:17
+    hostname: postgresql-0
+    environment:
+      POSTGRESQL_POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRESQL_USERNAME: ${POSTGRES_USER:-postgres}
+      POSTGRESQL_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRESQL_DATABASE: ${POSTGRES_DB:-nexo_db}
+      REPMGR_PASSWORD: ${REPMGR_PASSWORD:-repmgr123}
+      REPMGR_PRIMARY_HOST: postgresql-0
+      REPMGR_PARTNER_NODES: postgresql-0,postgresql-1,postgresql-2
+      REPMGR_NODE_NAME: postgresql-0
+      REPMGR_NODE_NETWORK_NAME: postgresql-0
+      REPMGR_PORT_NUMBER: 5432
+    volumes:
+      - postgres0_data:/bitnami/postgresql
+      - ./postgres/001_schema.sql:/docker-entrypoint-initdb.d/001_schema.sql:ro
+    ports:
+      - "5433:5432"
+    networks: [nexo]
+
+  postgresql-1:
+    image: bitnami/postgresql-repmgr:17
+    hostname: postgresql-1
+    environment:
+      POSTGRESQL_POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRESQL_USERNAME: ${POSTGRES_USER:-postgres}
+      POSTGRESQL_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRESQL_DATABASE: ${POSTGRES_DB:-nexo_db}
+      REPMGR_PASSWORD: ${REPMGR_PASSWORD:-repmgr123}
+      REPMGR_PRIMARY_HOST: postgresql-0
+      REPMGR_PARTNER_NODES: postgresql-0,postgresql-1,postgresql-2
+      REPMGR_NODE_NAME: postgresql-1
+      REPMGR_NODE_NETWORK_NAME: postgresql-1
+      REPMGR_PORT_NUMBER: 5432
+    volumes:
+      - postgres1_data:/bitnami/postgresql
+    ports:
+      - "5434:5432"
+    depends_on: [postgresql-0]
+    networks: [nexo]
+
+  postgresql-2:
+    image: bitnami/postgresql-repmgr:17
+    hostname: postgresql-2
+    environment:
+      POSTGRESQL_POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRESQL_USERNAME: ${POSTGRES_USER:-postgres}
+      POSTGRESQL_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRESQL_DATABASE: ${POSTGRES_DB:-nexo_db}
+      REPMGR_PASSWORD: ${REPMGR_PASSWORD:-repmgr123}
+      REPMGR_PRIMARY_HOST: postgresql-0
+      REPMGR_PARTNER_NODES: postgresql-0,postgresql-1,postgresql-2
+      REPMGR_NODE_NAME: postgresql-2
+      REPMGR_NODE_NETWORK_NAME: postgresql-2
+      REPMGR_PORT_NUMBER: 5432
+    volumes:
+      - postgres2_data:/bitnami/postgresql
+    ports:
+      - "5435:5432"
+    depends_on: [postgresql-0]
+    networks: [nexo]
+
+  db-lb:
+    image: bitnami/pgpool:4
+    hostname: db-lb
+    environment:
+      PGPOOL_BACKEND_NODES: 0:postgresql-0:5432,1:postgresql-1:5432,2:postgresql-2:5432
+      PGPOOL_SR_CHECK_USER: ${POSTGRES_USER:-postgres}
+      PGPOOL_SR_CHECK_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      PGPOOL_POSTGRES_USERNAME: ${POSTGRES_USER:-postgres}
+      PGPOOL_POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      PGPOOL_ADMIN_USERNAME: ${PGPOOL_ADMIN_USER:-admin}
+      PGPOOL_ADMIN_PASSWORD: ${PGPOOL_ADMIN_PASSWORD:-admin123}
+      PGPOOL_ENABLE_LOAD_BALANCING: "yes"
+    ports:
+      - "5432:5432"
+    depends_on:
+      - postgresql-0
+      - postgresql-1
+      - postgresql-2
+    networks:
+      nexo:
+        aliases:
+          - haproxy
+
+  artemis:
+    image: apache/activemq-artemis:2.40.0-alpine
+    hostname: artemis
+    environment:
+      ARTEMIS_USER: ${JMS_USER:-nexo}
+      ARTEMIS_PASSWORD: ${JMS_PASSWORD:-nexo123}
+      ANONYMOUS_LOGIN: "false"
+      EXTRA_ARGS: "--http-host 0.0.0.0 --relax-jolokia"
+    volumes:
+      - artemis_data:/var/lib/artemis-instance
+    ports:
+      - "61616:61616"
+      - "8161:8161"
+    networks: [nexo]
+
+  payara1:
+    build:
+      context: ../..
+      dockerfile: deploy/local/backend.Dockerfile
+    hostname: payara1
+    environment: &payara_environment
+      JMS_BROKER_URL: tcp://artemis:61616
+      JMS_USER: ${JMS_USER:-nexo}
+      JMS_PASSWORD: ${JMS_PASSWORD:-nexo123}
+      JMS_FACTURA_QUEUE: facturaCreadaQueue
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      JWT_SECRET: ${JWT_SECRET:-cambiar-esta-clave-de-desarrollo-por-una-de-32-caracteres}
+    environment:
+      <<: *payara_environment
+      INSTANCE_NAME: payara-nodo-1
+      APP_DISPLAY_PORT: "8081"
+    ports:
+      - "8081:8080"
+      - "4841:4848"
+    depends_on: [db-lb, artemis]
+    networks: [nexo]
+
+  payara2:
+    build:
+      context: ../..
+      dockerfile: deploy/local/backend.Dockerfile
+    hostname: payara2
+    environment:
+      <<: *payara_environment
+      INSTANCE_NAME: payara-nodo-2
+      APP_DISPLAY_PORT: "8082"
+    ports:
+      - "8082:8080"
+      - "4842:4848"
+    depends_on: [db-lb, artemis]
+    networks: [nexo]
+
+  payara3:
+    build:
+      context: ../..
+      dockerfile: deploy/local/backend.Dockerfile
+    hostname: payara3
+    environment:
+      <<: *payara_environment
+      INSTANCE_NAME: payara-nodo-3
+      APP_DISPLAY_PORT: "8083"
+    ports:
+      - "8083:8080"
+      - "4843:4848"
+    depends_on: [db-lb, artemis]
+    networks: [nexo]
+
+  web:
+    build:
+      context: ../..
+      dockerfile: deploy/local/frontend.Dockerfile
+      args:
+        VITE_GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+        VITE_ENABLE_MOCK_LOGIN: ${ENABLE_MOCK_LOGIN:-false}
+    hostname: nexo-web
+    ports:
+      - "8080:80"
+    depends_on:
+      - payara1
+      - payara2
+      - payara3
+    networks: [nexo]
+
+networks:
+  nexo:
+    name: nexo-ha-network
+
+volumes:
+  postgres0_data:
+  postgres1_data:
+  postgres2_data:
+  artemis_data:
