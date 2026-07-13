@@ -1,4 +1,4 @@
-name: Build backend and frontend
+name: Build backend, frontend and local deployment
 
 on:
   push:
@@ -55,3 +55,18 @@ jobs:
 
       - name: Build frontend
         run: npm run build
+
+  deployment:
+    name: Docker Compose configuration
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare environment
+        working-directory: deploy/local
+        run: cp .env.example .env
+
+      - name: Validate Compose model
+        working-directory: deploy/local
+        run: docker compose --env-file .env config --quiet
