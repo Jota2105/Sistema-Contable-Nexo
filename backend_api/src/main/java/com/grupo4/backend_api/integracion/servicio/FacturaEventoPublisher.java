@@ -2,16 +2,15 @@ package com.grupo4.backend_api.integracion.servicio;
 
 import com.grupo4.backend_api.facturacion.modelo.FacturaCabecera;
 import com.grupo4.backend_api.facturacion.modelo.FacturaDetalle;
+import jakarta.annotation.Resource;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.jms.JMSContext;
 import jakarta.jms.Queue;
 import jakarta.json.bind.Jsonb;
 import jakarta.json.bind.JsonbBuilder;
-import jakarta.annotation.Resource;
 import java.time.Instant;
 import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Map;
 
 @ApplicationScoped
@@ -20,7 +19,7 @@ public class FacturaEventoPublisher {
     @Inject
     private JMSContext jmsContext;
 
-    @Resource(lookup = "jms/facturaCreadaQueue")
+    @Resource(lookup = "java:global/jms/facturaCreadaQueue")
     private Queue facturaCreadaQueue;
 
     public void publicar(FacturaCabecera factura) {
