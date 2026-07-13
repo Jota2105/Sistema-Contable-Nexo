@@ -5,6 +5,7 @@ import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Date;
+import jakarta.json.bind.annotation.JsonbTransient;
 import jakarta.persistence.Basic;
 import jakarta.persistence.CascadeType;
 import jakarta.persistence.Column;
@@ -59,8 +60,15 @@ public class ComprobanteCabecera implements Serializable {
     public void setFecha(Date fecha) { this.fecha = fecha; }
     public TipoMovimiento getIdTipoMovimiento() { return idTipoMovimiento; }
     public void setIdTipoMovimiento(TipoMovimiento idTipoMovimiento) { this.idTipoMovimiento = idTipoMovimiento; }
+
+    @JsonbTransient
     public Collection<ComprobanteDetalle> getComprobanteDetalleCollection() { return comprobanteDetalleCollection; }
     public void setComprobanteDetalleCollection(Collection<ComprobanteDetalle> detalles) {
         this.comprobanteDetalleCollection = detalles == null ? new ArrayList<>() : detalles;
+    }
+
+    public Collection<ComprobanteDetalle> getDetalles() { return comprobanteDetalleCollection; }
+    public void setDetalles(Collection<ComprobanteDetalle> detalles) {
+        setComprobanteDetalleCollection(detalles);
     }
 }
