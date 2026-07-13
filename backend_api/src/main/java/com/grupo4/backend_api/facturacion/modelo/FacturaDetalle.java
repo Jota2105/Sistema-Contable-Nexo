@@ -1,6 +1,13 @@
 package com.grupo4.backend_api.facturacion.modelo;
 
-import jakarta.persistence.*;
+import jakarta.json.bind.annotation.JsonbTransient;
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.Id;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.ManyToOne;
+import jakarta.persistence.Table;
+import jakarta.persistence.Transient;
 import java.io.Serializable;
 
 @Entity
@@ -13,6 +20,7 @@ public class FacturaDetalle implements Serializable {
 
     @ManyToOne
     @JoinColumn(name = "ID_FACTURA", nullable = false)
+    @JsonbTransient
     private FacturaCabecera factura;
 
     @Column(name = "ID_ARTICULO", nullable = false)
@@ -24,11 +32,11 @@ public class FacturaDetalle implements Serializable {
     @Column(name = "PRECIO", nullable = false)
     private Double precio;
 
-    // Campo transitorio: no se guarda en BD, solo para mostrar en pantalla
     @Transient
     private String nombreArticulo;
 
-    public FacturaDetalle() {}
+    public FacturaDetalle() {
+    }
 
     public Integer getIdFacturaDet() { return idFacturaDet; }
     public void setIdFacturaDet(Integer idFacturaDet) { this.idFacturaDet = idFacturaDet; }
