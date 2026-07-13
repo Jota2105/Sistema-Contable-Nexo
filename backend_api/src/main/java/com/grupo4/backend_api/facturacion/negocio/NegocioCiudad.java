@@ -1,18 +1,24 @@
 package com.grupo4.backend_api.facturacion.negocio;
 
 import com.grupo4.backend_api.facturacion.modelo.CiudadEntrega;
-import jakarta.persistence.*;
+import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
 import jakarta.transaction.Transactional;
 import java.util.List;
 
+@ApplicationScoped
 public class NegocioCiudad {
 
     @PersistenceContext(unitName = "SistemaContablePU")
     private EntityManager em;
-    
+
     @Transactional
     public int insertar(CiudadEntrega ciudad) {
         try {
+            if (ciudad.getIdCiudad() == null) {
+                ciudad.setIdCiudad(obtenerSiguienteId());
+            }
             em.persist(ciudad);
             return 1;
         } catch (Exception e) {
@@ -24,11 +30,11 @@ public class NegocioCiudad {
     @Transactional
     public int modificar(CiudadEntrega ciudad) {
         try {
-            CiudadEntrega c = em.find(CiudadEntrega.class, ciudad.getIdCiudad());
-            if (c != null) {
-                c.setNombre(ciudad.getNombre());
-                em.persist(c);
+            CiudadEntrega existente = em.find(CiudadEntrega.class, ciudad.getIdCiudad());
+            if (existente == null) {
+                return 0;
             }
+            existente.setNombre(ciudad.getNombre());
             return 1;
         } catch (Exception e) {
             e.printStackTrace();
@@ -39,11 +45,11 @@ public class NegocioCiudad {
     @Transactional
     public int eliminar(Integer idCiudad) {
         try {
-            CiudadEntrega c = em.find(CiudadEntrega.class, idCiudad);
-            if (c == null) {
+            CiudadEntrega ciudad = em.find(CiudadEntrega.class, idCiudad);
+            if (ciudad == null) {
                 return 0;
             }
-            em.remove(c);
+            em.remove(ciudad);
             return 1;
         } catch (Exception e) {
             e.printStackTrace();
@@ -52,47 +58,28 @@ public class NegocioCiudad {
     }
 
     public CiudadEntrega buscar(Integer idCiudad) {
-        try {
-            return em.find(CiudadEntrega.class, idCiudad);
-        } catch (Exception e) {
-            e.printStackTrace();
-            return null;
-        }
+        return em.find(CiudadEntrega.class, idCiudad);
     }
 
     public List<CiudadEntrega> buscarPorNombre(String valor) {
-        try {
-            return em.createQuery(
-                            "SELECT c FROM CiudadEntrega c WHERE LOWER(c.nombre) LIKE :val",
-                            CiudadEntrega.class)
-                    .setParameter("val", "%" + valor.toLowerCase() + "%")
-                    .getResultList();
-        } catch (Exception e) {
-            e.printStackTrace();
-            return null;
-        }
+        return em.createQuery(
+                "SELECT c FROM CiudadEntrega c WHERE LOWER(c.nombre) LIKE :valor ORDER BY c.nombre",
+                CiudadEntrega.class)
+                .setParameter("valor", "%" + valor.trim().toLowerCase() + "%")
+                .getResultList();
     }
 
     public List<CiudadEntrega> listarTodos() {
-        try {
-            return em.createQuery(
-                    "SELECT c FROM CiudadEntrega c ORDER BY c.nombre",
-                    CiudadEntrega.class).getResultList();
-        } catch (Exception e) {
-            e.printStackTrace();
-            return null;
-        }
+        return em.createQuery(
+                "SELECT c FROM CiudadEntrega c ORDER BY c.nombre",
+                CiudadEntrega.class)
+                .getResultList();
     }
 
     public Integer obtenerSiguienteId() {
-        try {
-            Number max = (Number) em.createQuery(
-                            "SELECT COALESCE(MAX(c.idCiudad), 0) FROM CiudadEntrega c")
-                    .getSingleResult();
-            return max.intValue() + 1;
-        } catch (Exception e) {
-            e.printStackTrace();
-            return 1;
-        }
+        Number maximo = (Number) em.createQuery(
+                "SELECT COALESCE(MAX(c.idCiudad), 0) FROM CiudadEntrega c")
+                .getSingleResult();
+        return maximo.intValue() + 1;
     }
 }
