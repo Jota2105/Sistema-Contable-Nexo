@@ -1,301 +1,214 @@
 package com.grupo4.backend_api.inventario.negocio;
 
-import com.grupo4.backend_api.facturacion.modelo.FacturaCabecera;
-import com.grupo4.backend_api.facturacion.modelo.FacturaDetalle;
 import com.grupo4.backend_api.inventario.modelo.Articulo;
 import com.grupo4.backend_api.inventario.modelo.ComprobanteCabecera;
 import com.grupo4.backend_api.inventario.modelo.ComprobanteDetalle;
 import com.grupo4.backend_api.inventario.modelo.TipoMovimiento;
-
-
+import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.NoResultException;
+import jakarta.persistence.PersistenceContext;
+import jakarta.transaction.Transactional;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Date;
 import java.util.List;
-import jakarta.persistence.EntityManager;
-import jakarta.persistence.EntityManagerFactory;
-import jakarta.persistence.Persistence;
-import jakarta.persistence.TypedQuery;
 
+@ApplicationScoped
 public class NegocioComprobante {
 
-    private static final EntityManagerFactory emf = Persistence.createEntityManagerFactory("SistemaContablePU");
+    private static final long LOCK_CABECERA = 42001L;
+    private static final long LOCK_DETALLE = 42002L;
 
-    /**
-     * Guarda la Cabecera y el Detalle en una sola transacción atómica.
-     */
-    public void registrarTransaccion(ComprobanteCabecera cabecera, List<ComprobanteDetalle> detalles) throws Exception {
-        validarTransaccion(cabecera, detalles);
+    @PersistenceContext(unitName = "SistemaContablePU")
+    private EntityManager em;
 
-        if (cabecera.getFecha() == null) {
-            cabecera.setFecha(new Date());
+    @Transactional
+    public ComprobanteCabecera crear(ComprobanteCabecera comprobante) {
+        validar(comprobante);
+        validarNumeroUnico(comprobante.getNumeroComprobante(), null);
+
+        TipoMovimiento tipo = em.find(TipoMovimiento.class,
+                comprobante.getIdTipoMovimiento().getIdTipoMovimiento());
+        if (tipo == null) {
+            throw new IllegalArgumentException("El tipo de movimiento seleccionado no existe.");
         }
 
-        EntityManager em = emf.createEntityManager();
-        try {
-            em.getTransaction().begin();
+        comprobante.setIdComprobante(siguienteId("COMPROBANTE_CABECERA", "ID_COMPROBANTE", LOCK_CABECERA));
+        comprobante.setNumeroComprobante(comprobante.getNumeroComprobante().trim());
+        comprobante.setFecha(comprobante.getFecha() == null ? new Date() : comprobante.getFecha());
+        comprobante.setIdTipoMovimiento(tipo);
+        comprobante.setComprobanteDetalleCollection(prepararDetalles(
+                comprobante,
+                comprobante.getComprobanteDetalleCollection(),
+                tipo));
 
-            // Enlazar bidireccionalmente los objetos para la persistencia
-            for (ComprobanteDetalle detalle : detalles) {
-                detalle.setIdComprobante(cabecera);
-            }
-            cabecera.setComprobanteDetalleCollection(detalles);
-
-            // Gracias a CascadeType.ALL, persistir la cabecera guardará los detalles.
-            em.merge(cabecera);
-
-            em.getTransaction().commit();
-            
-        } catch (Exception e) {
-            if (em.getTransaction().isActive()) {
-                em.getTransaction().rollback();
-            }
-            throw new Exception("Error al guardar la transacción: " + e.getMessage());
-        } finally {
-            if (em != null) em.close();
-        }
+        em.persist(comprobante);
+        em.flush();
+        return comprobante;
     }
 
-    /**
-     * Obtiene el historial de comprobantes generados.
-     */
-    public List<ComprobanteCabecera> obtenerHistorialComprobantes() {
-        EntityManager em = emf.createEntityManager();
-        try {
-            TypedQuery<ComprobanteCabecera> query = em.createNamedQuery("ComprobanteCabecera.findAll", ComprobanteCabecera.class);
-            List<ComprobanteCabecera> lista = query.getResultList();
-            
-            // Inicialización de colecciones perezosas antes de cerrar el EntityManager
-            for (ComprobanteCabecera cab : lista) {
-                if (cab.getComprobanteDetalleCollection() != null) {
-                    cab.getComprobanteDetalleCollection().size(); 
-                }
-            }
-            
-            return lista;
-        } finally {
-            if (em != null) em.close();
+    @Transactional
+    public ComprobanteCabecera actualizar(BigDecimal id, ComprobanteCabecera cambios) {
+        ComprobanteCabecera existente = buscar(id);
+        if (existente == null) {
+            return null;
         }
+        validar(cambios);
+        validarNumeroUnico(cambios.getNumeroComprobante(), id);
+
+        TipoMovimiento tipo = em.find(TipoMovimiento.class,
+                cambios.getIdTipoMovimiento().getIdTipoMovimiento());
+        if (tipo == null) {
+            throw new IllegalArgumentException("El tipo de movimiento seleccionado no existe.");
+        }
+
+        existente.setNumeroComprobante(cambios.getNumeroComprobante().trim());
+        existente.setFecha(cambios.getFecha() == null ? existente.getFecha() : cambios.getFecha());
+        existente.setIdTipoMovimiento(tipo);
+        existente.getComprobanteDetalleCollection().clear();
+        em.flush();
+        existente.getComprobanteDetalleCollection().addAll(
+                prepararDetalles(existente, cambios.getComprobanteDetalleCollection(), tipo));
+        em.flush();
+        return existente;
     }
 
-    /**
-     * Centraliza las reglas de negocio para asegurar la integridad de los datos.
-     */
-    private void validarTransaccion(ComprobanteCabecera cabecera, List<ComprobanteDetalle> detalles) throws Exception {
-        if (cabecera == null) {
-            throw new Exception("Los datos del comprobante están vacíos.");
-        }
-        if (cabecera.getNumeroComprobante() == null || cabecera.getNumeroComprobante().trim().isEmpty()) {
-            throw new Exception("El número de comprobante es obligatorio.");
-        }
-        if (cabecera.getIdTipoMovimiento() == null) {
-            throw new Exception("Debe seleccionar un tipo de movimiento (Ingreso/Egreso).");
-        }
-        
-        if (detalles == null || detalles.isEmpty()) {
-            throw new Exception("El comprobante debe tener al menos un artículo en el detalle.");
-        }
-
-        for (ComprobanteDetalle det : detalles) {
-            if (det.getIdArticulo() == null) {
-                throw new Exception("Una de las filas no tiene un artículo seleccionado.");
-            }
-            
-            if (det.getCantidad() == null || det.getCantidad().compareTo(BigInteger.ZERO) <= 0) {
-                throw new Exception("Las cantidades de los artículos deben ser mayores a cero.");
-            }
-            
-            if (det.getPrecio() == null || det.getPrecio().compareTo(BigDecimal.ZERO) < 0) {
-                throw new Exception("El precio en el detalle no puede ser negativo.");
-            }
-        }
-    }
-    
-    /**
-     * Obtiene el siguiente ID disponible para la Cabecera.
-     */
-    public BigDecimal obtenerSiguienteId() {
-        EntityManager em = emf.createEntityManager();
-        try {
-            Number max = (Number) em.createQuery(
-                            "SELECT COALESCE(MAX(c.idComprobante), 0) FROM ComprobanteCabecera c")
-                    .getSingleResult();
-            return new BigDecimal(max.longValue() + 1);
-        } catch (Exception e) {
-            e.printStackTrace();
-            return BigDecimal.ONE;
-        } finally {
-            if (em != null) em.close();
-        }
-    }
-
-    /**
-     * Obtiene el siguiente ID disponible para el Detalle (uso temporal en memoria).
-     */
-    public BigDecimal obtenerSiguienteIdDetalle() {
-        EntityManager em = emf.createEntityManager();
-        try {
-            Number max = (Number) em.createQuery(
-                            "SELECT COALESCE(MAX(d.idComprobanteDet), 0) FROM ComprobanteDetalle d")
-                    .getSingleResult();
-            return new BigDecimal(max.longValue() + 1);
-        } catch (Exception e) {
-            e.printStackTrace();
-            return BigDecimal.ONE;
-        } finally {
-            if (em != null) em.close();
-        }
-    }
-    
-    /**
-     * Modifica un comprobante existente y sus detalles.
-     */
-    public void modificarTransaccion(ComprobanteCabecera cabeceraUI, List<ComprobanteDetalle> detallesActualizados) throws Exception {
-        EntityManager em = emf.createEntityManager();
-        try {
-            em.getTransaction().begin();
-
-            ComprobanteCabecera cabeceraBD = em.find(ComprobanteCabecera.class, cabeceraUI.getIdComprobante());
-            if (cabeceraBD == null) {
-                throw new Exception("El comprobante no existe.");
-            }
-
-            cabeceraBD.setNumeroComprobante(cabeceraUI.getNumeroComprobante());
-            cabeceraBD.setFecha(cabeceraUI.getFecha());
-            cabeceraBD.setIdTipoMovimiento(cabeceraUI.getIdTipoMovimiento());
-
-            // Sincronización de la colección mediante Orphan Removal
-            cabeceraBD.getComprobanteDetalleCollection().clear();
-
-            for (ComprobanteDetalle det : detallesActualizados) {
-                det.setIdComprobante(cabeceraBD); 
-                cabeceraBD.getComprobanteDetalleCollection().add(det);
-            }
-
-            em.merge(cabeceraBD);
-            em.getTransaction().commit();
-
-        } catch (Exception ex) {
-            if (em.getTransaction().isActive()) {
-                em.getTransaction().rollback();
-            }
-            throw new Exception("Error al modificar en BD: " + ex.getMessage());
-        } finally {
-            if (em != null) em.close();
-        }
-    }
-
-    /**
-     * Elimina un comprobante y sus detalles por ID.
-     */
-    public void eliminarTransaccion(BigDecimal idComprobante) throws Exception {
-        EntityManager em = emf.createEntityManager();
-        try {
-            em.getTransaction().begin();
-            ComprobanteCabecera cabecera = em.find(ComprobanteCabecera.class, idComprobante);
-            if (cabecera != null) {
-                em.remove(cabecera); 
-            } else {
-                throw new Exception("El comprobante no existe.");
-            }
-            em.getTransaction().commit();
-        } catch (Exception e) {
-            if (em.getTransaction().isActive()) em.getTransaction().rollback();
-            throw new Exception("Error al eliminar: " + e.getMessage());
-        } finally {
-            if (em != null) em.close();
-        }
-    }
-
-    /**
-     * Busca un comprobante específico por su ID.
-     */
-    public ComprobanteCabecera buscarPorId(BigDecimal idComprobante) {
-        EntityManager em = emf.createEntityManager();
-        try {
-            ComprobanteCabecera cabecera = em.find(ComprobanteCabecera.class, idComprobante);
-            // Carga forzada de la colección (Lazy Loading) antes del cierre del contexto
-            if (cabecera != null && cabecera.getComprobanteDetalleCollection() != null) {
-                cabecera.getComprobanteDetalleCollection().size(); 
-            }
-            return cabecera;
-        } finally {
-            if (em != null) em.close();
-        }
-    }
-    
-    /**
-     * Registra un egreso de inventario a partir de una Factura de Venta.
-     */
-    public boolean registrarEgresoPorVenta(FacturaCabecera factura) {
-        EntityManager em = emf.createEntityManager();
-        try {
-            em.getTransaction().begin();
-
-            TipoMovimiento tipoVenta = em.find(TipoMovimiento.class, new BigDecimal(1));
-            if (tipoVenta == null) {
-                System.out.println("ERROR INVENTARIO: No se encontró el Tipo Movimiento con ID 1 (Egreso/Venta).");
-                return false;
-            }
-
-            Number maxIdCab = (Number) em.createQuery(
-                    "SELECT COALESCE(MAX(c.idComprobante), 0) FROM ComprobanteCabecera c")
-                    .getSingleResult();
-            BigDecimal idCabecera = new BigDecimal(maxIdCab.longValue() + 1);
-
-            ComprobanteCabecera cabecera = new ComprobanteCabecera();
-            cabecera.setIdComprobante(idCabecera);
-            cabecera.setNumeroComprobante("VEN-" + factura.getIdFactura());
-            cabecera.setFecha(factura.getFecha());
-            cabecera.setIdTipoMovimiento(tipoVenta);
-
-            Number maxIdDet = (Number) em.createQuery(
-                    "SELECT COALESCE(MAX(d.idComprobanteDet), 0) FROM ComprobanteDetalle d")
-                    .getSingleResult();
-            long nextIdDetalle = maxIdDet.longValue() + 1;
-
-            List<ComprobanteDetalle> listaDetalles = new ArrayList<>();
-            
-            for (FacturaDetalle detFactura : factura.getDetalles()) {
-                ComprobanteDetalle detInv = new ComprobanteDetalle();
-                
-                detInv.setIdComprobanteDet(BigDecimal.valueOf(nextIdDetalle++));
-                detInv.setIdComprobante(cabecera); 
-                
-                // Conversión de tipos para compatibilidad entre módulos
-                BigDecimal idArticuloConvertido = BigDecimal.valueOf(detFactura.getIdArticulo());
-                Articulo articulo = em.find(Articulo.class, idArticuloConvertido);
-                
-                if (articulo == null) {
-                    System.out.println("ERROR INVENTARIO: El artículo con ID " + idArticuloConvertido + " no existe.");
-                    return false;
-                }
-                detInv.setIdArticulo(articulo);
-                
-                detInv.setCantidad(BigInteger.valueOf(detFactura.getCantidad()));
-                detInv.setPrecio(BigDecimal.valueOf(detFactura.getPrecio()));
-                
-                listaDetalles.add(detInv);
-            }
-            
-            cabecera.setComprobanteDetalleCollection(listaDetalles);
-
-            em.persist(cabecera);
-            em.getTransaction().commit();
-            
-            System.out.println("INVENTARIO: Comprobante de egreso generado exitosamente.");
-            return true;
-
-        } catch (Exception e) {
-            if (em.getTransaction().isActive()) {
-                em.getTransaction().rollback();
-            }
-            System.out.println("ERROR AL GENERAR EL COMPROBANTE DE INVENTARIO DESDE FACTURACIÓN:");
-            e.printStackTrace();
+    @Transactional
+    public boolean eliminar(BigDecimal id) {
+        ComprobanteCabecera comprobante = em.find(ComprobanteCabecera.class, id);
+        if (comprobante == null) {
             return false;
-        } finally {
-            if (em != null) em.close();
         }
+        em.remove(comprobante);
+        return true;
+    }
+
+    public ComprobanteCabecera buscar(BigDecimal id) {
+        try {
+            return em.createQuery(
+                    "SELECT DISTINCT c FROM ComprobanteCabecera c " +
+                    "LEFT JOIN FETCH c.comprobanteDetalleCollection WHERE c.idComprobante = :id",
+                    ComprobanteCabecera.class)
+                    .setParameter("id", id)
+                    .getSingleResult();
+        } catch (NoResultException e) {
+            return null;
+        }
+    }
+
+    public List<ComprobanteCabecera> listar() {
+        return em.createQuery(
+                "SELECT DISTINCT c FROM ComprobanteCabecera c " +
+                "LEFT JOIN FETCH c.comprobanteDetalleCollection " +
+                "ORDER BY c.fecha DESC, c.idComprobante DESC",
+                ComprobanteCabecera.class)
+                .getResultList();
+    }
+
+    public List<Object[]> movimientos(Date inicio, Date fin) {
+        return em.createQuery(
+                "SELECT d.idArticulo.idArticulo, d.idArticulo.nombre, " +
+                "c.idTipoMovimiento.nombre, c.idTipoMovimiento.tipo, SUM(d.cantidad) " +
+                "FROM ComprobanteDetalle d JOIN d.idComprobante c " +
+                "WHERE c.fecha BETWEEN :inicio AND :fin " +
+                "GROUP BY d.idArticulo.idArticulo, d.idArticulo.nombre, " +
+                "c.idTipoMovimiento.nombre, c.idTipoMovimiento.tipo " +
+                "ORDER BY d.idArticulo.nombre, c.idTipoMovimiento.nombre",
+                Object[].class)
+                .setParameter("inicio", inicio)
+                .setParameter("fin", fin)
+                .getResultList();
+    }
+
+    public int stock(BigDecimal idArticulo) {
+        Number valor = (Number) em.createQuery(
+                "SELECT COALESCE(SUM(CASE WHEN c.idTipoMovimiento.tipo = 'I' " +
+                "THEN d.cantidad ELSE -d.cantidad END), 0) " +
+                "FROM ComprobanteDetalle d JOIN d.idComprobante c " +
+                "WHERE d.idArticulo.idArticulo = :id")
+                .setParameter("id", idArticulo)
+                .getSingleResult();
+        return valor == null ? 0 : valor.intValue();
+    }
+
+    private Collection<ComprobanteDetalle> prepararDetalles(
+            ComprobanteCabecera cabecera,
+            Collection<ComprobanteDetalle> originales,
+            TipoMovimiento tipo) {
+        List<ComprobanteDetalle> preparados = new ArrayList<>();
+        for (ComprobanteDetalle detalle : originales) {
+            if (detalle == null || detalle.getIdArticulo() == null ||
+                    detalle.getIdArticulo().getIdArticulo() == null) {
+                throw new IllegalArgumentException("Debe seleccionar un artículo en cada detalle.");
+            }
+            if (detalle.getCantidad() == null || detalle.getCantidad().compareTo(BigInteger.ZERO) <= 0) {
+                throw new IllegalArgumentException("La cantidad debe ser mayor que cero.");
+            }
+            if (detalle.getPrecio() == null || detalle.getPrecio().compareTo(BigDecimal.ZERO) < 0) {
+                throw new IllegalArgumentException("El precio no puede ser negativo.");
+            }
+
+            Articulo articulo = em.find(Articulo.class, detalle.getIdArticulo().getIdArticulo());
+            if (articulo == null) {
+                throw new IllegalArgumentException("El artículo seleccionado no existe.");
+            }
+            if (Character.toUpperCase(tipo.getTipo()) == 'E' && stock(articulo.getIdArticulo()) < detalle.getCantidad().intValue()) {
+                throw new IllegalArgumentException(
+                        "Stock insuficiente para el artículo " + articulo.getNombre() + ".");
+            }
+
+            ComprobanteDetalle preparado = new ComprobanteDetalle();
+            preparado.setIdComprobanteDet(siguienteId("COMPROBANTE_DETALLE", "ID_COMPROBANTE_DET", LOCK_DETALLE));
+            preparado.setIdComprobante(cabecera);
+            preparado.setIdArticulo(articulo);
+            preparado.setCantidad(detalle.getCantidad());
+            preparado.setPrecio(detalle.getPrecio());
+            preparados.add(preparado);
+        }
+        return preparados;
+    }
+
+    private void validar(ComprobanteCabecera comprobante) {
+        if (comprobante == null) {
+            throw new IllegalArgumentException("Los datos del comprobante son obligatorios.");
+        }
+        if (comprobante.getNumeroComprobante() == null || comprobante.getNumeroComprobante().trim().isEmpty()) {
+            throw new IllegalArgumentException("El número del comprobante es obligatorio.");
+        }
+        if (comprobante.getIdTipoMovimiento() == null ||
+                comprobante.getIdTipoMovimiento().getIdTipoMovimiento() == null) {
+            throw new IllegalArgumentException("Debe seleccionar un tipo de movimiento.");
+        }
+        if (comprobante.getComprobanteDetalleCollection() == null ||
+                comprobante.getComprobanteDetalleCollection().isEmpty()) {
+            throw new IllegalArgumentException("El comprobante debe contener al menos un detalle.");
+        }
+    }
+
+    private void validarNumeroUnico(String numero, BigDecimal idExcluir) {
+        String jpql = "SELECT COUNT(c) FROM ComprobanteCabecera c " +
+                "WHERE LOWER(c.numeroComprobante) = :numero" +
+                (idExcluir == null ? "" : " AND c.idComprobante <> :id");
+        var consulta = em.createQuery(jpql, Long.class)
+                .setParameter("numero", numero.trim().toLowerCase());
+        if (idExcluir != null) {
+            consulta.setParameter("id", idExcluir);
+        }
+        if (consulta.getSingleResult() > 0) {
+            throw new IllegalStateException("Ya existe un comprobante con ese número.");
+        }
+    }
+
+    private BigDecimal siguienteId(String tabla, String columna, long lock) {
+        em.createNativeQuery("SELECT pg_advisory_xact_lock(?1)")
+                .setParameter(1, lock)
+                .getSingleResult();
+        Number valor = (Number) em.createNativeQuery(
+                "SELECT COALESCE(MAX(" + columna + "), 0) + 1 FROM " + tabla)
+                .getSingleResult();
+        return BigDecimal.valueOf(valor.longValue());
     }
 }
