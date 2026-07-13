@@ -41,7 +41,7 @@ public class IntegracionService {
     @Inject
     private JMSContext jmsContext;
 
-    @Resource(lookup = "jms/facturaCreadaQueue")
+    @Resource(lookup = "java:global/jms/facturaCreadaQueue")
     private Queue facturaCreadaQueue;
 
     @PersistenceContext(unitName = "SistemaContablePU")
@@ -171,8 +171,9 @@ public class IntegracionService {
 
     private TipoMovimiento buscarTipoEgreso() {
         List<TipoMovimiento> tipos = em.createQuery(
-                "SELECT t FROM TipoMovimiento t WHERE UPPER(t.tipo) = 'E' ORDER BY t.idTipoMovimiento",
+                "SELECT t FROM TipoMovimiento t WHERE t.tipo = :tipo ORDER BY t.idTipoMovimiento",
                 TipoMovimiento.class)
+                .setParameter("tipo", 'E')
                 .setMaxResults(1)
                 .getResultList();
         if (tipos.isEmpty()) {
