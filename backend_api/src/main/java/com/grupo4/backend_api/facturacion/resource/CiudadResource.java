@@ -1,13 +1,5 @@
-/*
- * Click nbfs://nbhost/SystemFileSystem/Templates/Licenses/license-default.txt to change this license
- * Click nbfs://nbhost/SystemFileSystem/Templates/Classes/Class.java to edit this template
- */
 package com.grupo4.backend_api.facturacion.resource;
 
-/**
- *
- * @author dcobe
- */
 import com.grupo4.backend_api.core.ApiException;
 import com.grupo4.backend_api.core.ApiResponse;
 import com.grupo4.backend_api.facturacion.modelo.CiudadEntrega;
@@ -31,17 +23,15 @@ public class CiudadResource {
 
     @GET
     public Response obtenerCiudades(@QueryParam("nombre") String nombre) {
-        List<CiudadEntrega> lista = null;
-        if (nombre != null && !nombre.trim().isEmpty()) {
-            lista = negocioCiudad.buscarPorNombre(nombre);
+        List<CiudadEntrega> lista = (nombre == null || nombre.isBlank())
+                ? negocioCiudad.listarTodos()
+                : negocioCiudad.buscarPorNombre(nombre);
+
+        if (lista == null) {
+            throw new ApiException(Status.INTERNAL_SERVER_ERROR, "No fue posible recuperar las ciudades.");
         }
-        
-        if (lista == null || lista.isEmpty()) {
-            throw new ApiException(Status.NOT_FOUND, "No se encontraron ciudades que coincidan con: " + nombre);
-        }
-        
-        ApiResponse<List<CiudadEntrega>> response = new ApiResponse<>(200, "Ciudades obtenidas exitosamente", lista);
-        return Response.ok(response).build();
+
+        return Response.ok(new ApiResponse<>(200, "Ciudades obtenidas exitosamente", lista)).build();
     }
 
     @GET
@@ -51,37 +41,38 @@ public class CiudadResource {
         if (ciudad == null) {
             throw new ApiException(Status.NOT_FOUND, "Ciudad no encontrada con ID: " + idCiudad);
         }
-        
-        ApiResponse<CiudadEntrega> response = new ApiResponse<>(200, "Ciudad obtenida exitosamente", ciudad);
-        return Response.ok(response).build();
+        return Response.ok(new ApiResponse<>(200, "Ciudad obtenida exitosamente", ciudad)).build();
     }
 
     @POST
     public Response crearCiudad(CiudadEntrega ciudad) {
-        int resultado = negocioCiudad.insertar(ciudad);
-        if (resultado == 0 || resultado == -1) {
-            throw new ApiException(Status.INTERNAL_SERVER_ERROR, "Error interno al intentar crear la ciudad.");
+        if (ciudad == null || ciudad.getNombre() == null || ciudad.getNombre().isBlank()) {
+            throw new ApiException(Status.BAD_REQUEST, "El nombre de la ciudad es obligatorio.");
         }
-        
-        ApiResponse<CiudadEntrega> response = new ApiResponse<>(201, "Ciudad creada exitosamente", ciudad);
-        return Response.status(Status.CREATED).entity(response).build();
+        int resultado = negocioCiudad.insertar(ciudad);
+        if (resultado == -1) {
+            throw new ApiException(Status.INTERNAL_SERVER_ERROR, "Error interno al crear la ciudad.");
+        }
+        return Response.status(Status.CREATED)
+                .entity(new ApiResponse<>(201, "Ciudad creada exitosamente", ciudad))
+                .build();
     }
 
     @PUT
     @Path("/{id}")
     public Response actualizarCiudad(@PathParam("id") Integer idCiudad, CiudadEntrega ciudad) {
-        // Aseguramos que el ID del payload sea el mismo de la URL
+        if (ciudad == null || ciudad.getNombre() == null || ciudad.getNombre().isBlank()) {
+            throw new ApiException(Status.BAD_REQUEST, "El nombre de la ciudad es obligatorio.");
+        }
         ciudad.setIdCiudad(idCiudad);
-        
         int resultado = negocioCiudad.modificar(ciudad);
         if (resultado == 0) {
-            throw new ApiException(Status.NOT_FOUND, "No se puede actualizar. Ciudad no encontrada con ID: " + idCiudad);
-        } else if (resultado == -1) {
-            throw new ApiException(Status.INTERNAL_SERVER_ERROR, "Error interno al intentar actualizar la ciudad.");
+            throw new ApiException(Status.NOT_FOUND, "Ciudad no encontrada con ID: " + idCiudad);
         }
-        
-        ApiResponse<CiudadEntrega> response = new ApiResponse<>(200, "Ciudad actualizada exitosamente", ciudad);
-        return Response.ok(response).build();
+        if (resultado == -1) {
+            throw new ApiException(Status.INTERNAL_SERVER_ERROR, "Error interno al actualizar la ciudad.");
+        }
+        return Response.ok(new ApiResponse<>(200, "Ciudad actualizada exitosamente", ciudad)).build();
     }
 
     @DELETE
@@ -89,12 +80,11 @@ public class CiudadResource {
     public Response eliminarCiudad(@PathParam("id") Integer id) {
         int resultado = negocioCiudad.eliminar(id);
         if (resultado == 0) {
-            throw new ApiException(Status.NOT_FOUND, "No se puede eliminar. Ciudad no encontrada con ID: " + id);
-        } else if (resultado == -1) {
-            throw new ApiException(Status.INTERNAL_SERVER_ERROR, "Error interno al intentar eliminar la ciudad.");
+            throw new ApiException(Status.NOT_FOUND, "Ciudad no encontrada con ID: " + id);
         }
-        
-        ApiResponse<Void> response = new ApiResponse<>(200, "Ciudad eliminada exitosamente");
-        return Response.ok(response).build();
+        if (resultado == -1) {
+            throw new ApiException(Status.INTERNAL_SERVER_ERROR, "Error interno al eliminar la ciudad.");
+        }
+        return Response.ok(new ApiResponse<Void>(200, "Ciudad eliminada exitosamente")).build();
     }
 }
