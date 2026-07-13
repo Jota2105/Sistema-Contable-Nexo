@@ -9,11 +9,10 @@ import com.grupo4.backend_api.inventario.modelo.ComprobanteCabecera;
 import com.grupo4.backend_api.inventario.modelo.ComprobanteDetalle;
 import com.grupo4.backend_api.inventario.modelo.TipoMovimiento;
 import com.grupo4.backend_api.inventario.negocio.NegocioComprobante;
-import jakarta.annotation.Resource;
 import jakarta.enterprise.context.RequestScoped;
 import jakarta.inject.Inject;
-import jakarta.jms.JMSContext;
 import jakarta.jms.JMSConsumer;
+import jakarta.jms.JMSContext;
 import jakarta.jms.Message;
 import jakarta.jms.Queue;
 import jakarta.jms.QueueBrowser;
@@ -39,10 +38,7 @@ import java.util.Map;
 public class IntegracionService {
 
     @Inject
-    private JMSContext jmsContext;
-
-    @Resource(lookup = "java:global/jms/facturaCreadaQueue")
-    private Queue facturaCreadaQueue;
+    private JmsClientFactory jmsClientFactory;
 
     @PersistenceContext(unitName = "SistemaContablePU")
     private EntityManager em;
@@ -52,7 +48,10 @@ public class IntegracionService {
 
     public List<MensajeIntegracionDTO> listarCola() {
         List<MensajeIntegracionDTO> mensajes = new ArrayList<>();
-        try (QueueBrowser browser = jmsContext.createBrowser(facturaCreadaQueue)) {
+        Queue queue = jmsClientFactory.facturaCreadaQueue();
+
+        try (JMSContext jmsContext = jmsClientFactory.crearContexto(JMSContext.AUTO_ACKNOWLEDGE);
+             QueueBrowser browser = jmsContext.createBrowser(queue)) {
             Enumeration<?> elementos = browser.getEnumeration();
             while (elementos.hasMoreElements()) {
                 Message message = (Message) elementos.nextElement();
@@ -86,7 +85,10 @@ public class IntegracionService {
         }
 
         String selector = "JMSMessageID = '" + idMensaje.replace("'", "''") + "'";
-        try (JMSConsumer consumer = jmsContext.createConsumer(facturaCreadaQueue, selector)) {
+        Queue queue = jmsClientFactory.facturaCreadaQueue();
+
+        try (JMSContext jmsContext = jmsClientFactory.crearContexto(JMSContext.SESSION_TRANSACTED);
+             JMSConsumer consumer = jmsContext.createConsumer(queue, selector)) {
             Message recibido = consumer.receive(3000);
             if (recibido == null) {
                 throw new NoResultException("El mensaje ya no se encuentra en la cola.");
@@ -125,6 +127,7 @@ public class IntegracionService {
             em.persist(historial);
             em.flush();
 
+            jmsContext.commit();
             return convertirHistorial(historial);
         } catch (NoResultException | IllegalArgumentException | IllegalStateException e) {
             throw e;
@@ -171,9 +174,8 @@ public class IntegracionService {
 
     private TipoMovimiento buscarTipoEgreso() {
         List<TipoMovimiento> tipos = em.createQuery(
-                "SELECT t FROM TipoMovimiento t WHERE t.tipo = :tipo ORDER BY t.idTipoMovimiento",
+                "SELECT t FROM TipoMovimiento t WHERE UPPER(t.tipo) = 'E' ORDER BY t.idTipoMovimiento",
                 TipoMovimiento.class)
-                .setParameter("tipo", 'E')
                 .setMaxResults(1)
                 .getResultList();
         if (tipos.isEmpty()) {
