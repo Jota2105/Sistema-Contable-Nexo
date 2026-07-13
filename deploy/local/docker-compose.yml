@@ -1,3 +1,11 @@
+x-payara-environment: &payara_environment
+  JMS_BROKER_URL: tcp://artemis:61616
+  JMS_USER: ${JMS_USER:-nexo}
+  JMS_PASSWORD: ${JMS_PASSWORD:-nexo123}
+  JMS_FACTURA_QUEUE: facturaCreadaQueue
+  GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+  JWT_SECRET: ${JWT_SECRET:-cambiar-esta-clave-de-desarrollo-por-una-de-32-caracteres}
+
 services:
   postgresql-0:
     image: bitnami/postgresql-repmgr:17
@@ -105,13 +113,6 @@ services:
       context: ../..
       dockerfile: deploy/local/backend.Dockerfile
     hostname: payara1
-    environment: &payara_environment
-      JMS_BROKER_URL: tcp://artemis:61616
-      JMS_USER: ${JMS_USER:-nexo}
-      JMS_PASSWORD: ${JMS_PASSWORD:-nexo123}
-      JMS_FACTURA_QUEUE: facturaCreadaQueue
-      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
-      JWT_SECRET: ${JWT_SECRET:-cambiar-esta-clave-de-desarrollo-por-una-de-32-caracteres}
     environment:
       <<: *payara_environment
       INSTANCE_NAME: payara-nodo-1
